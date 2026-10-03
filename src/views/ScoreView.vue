@@ -11,6 +11,8 @@ const message = useMessage();
 const selectedId = defineModel<string>("selectedId", { default: "a" });
 const selected = computed(() => store.schemes.find((item) => item.id === selectedId.value) ?? store.schemes[0]);
 const currentScore = computed(() => store.record(selected.value.id));
+/** 系统自动回避：评委全程看不到原因与作者信息，只看到中性提示 */
+const recused = computed(() => (store.judge ? store.isRecused(store.judge, selected.value.id) : false));
 const form = reactive({ values: Object.fromEntries(store.criteria.map((item) => [item.id, 60])) as Record<string, number>, comment: "", conflict: false });
 const schema = toTypedSchema(z.object({ comment: z.string().min(4, "请至少填写4个字的评审意见") }));
 const { errors, validate } = useForm({ validationSchema: schema });
@@ -23,7 +25,7 @@ watch(selectedId, () => {
 }, { immediate: true });
 
 const weighted = computed(() => store.criteria.reduce((sum, item) => sum + form.values[item.id] * item.weight / 100, 0));
-const disabled = computed(() => store.isOrganizer || currentScore.value?.submitted || store.published);
+const disabled = computed(() => store.isOrganizer || recused.value || currentScore.value?.submitted || store.published);
 
 function draft() {
   store.saveDraft(selected.value.id, form.values, form.comment, form.conflict);
@@ -40,10 +42,19 @@ async function submit() {
 <template>
   <NAlert v-if="store.isOrganizer" type="info" show-icon>主办方在结果锁定前不能查看任何评委的评分值。</NAlert>
   <div class="workspace">
-    <NCard title="匿名方案" class="scheme-panel"><button v-for="item in store.schemes" :key="item.id" class="scheme" :class="{ active: selectedId === item.id }" @click="selectedId = item.id"><span>{{ item.code }}</span><b>{{ item.title }}</b><small>{{ item.publicNo }} · {{ item.status }}</small></button></NCard>
+    <NCard title="匿名方案" class="scheme-panel">
+      <button v-for="item in store.schemes" :key="item.id" class="scheme" :class="{ active: selectedId === item.id }" @click="selectedId = item.id">
+        <span>{{ item.code }}</span><b>{{ item.title }}</b><small>{{ item.publicNo }} · {{ item.status }}</small>
+        <NTag v-if="store.judge && store.isRecused(store.judge, item.id)" size="small" type="warning" class="recused-tag">系统回避</NTag>
+      </button>
+    </NCard>
     <NCard class="score-panel">
       <template #header><div class="card-title"><div><small>{{ selected.code }} · {{ selected.publicNo }}</small><h2>{{ selected.title }}</h2></div><NTag :type="selected.status === '已锁定' ? 'success' : 'warning'">{{ selected.status }}</NTag></div></template>
       <p class="synopsis">{{ selected.synopsis }}</p>
+      <NAlert v-if="recused" type="warning" show-icon class="recused-alert">
+        <template v-if="currentScore?.submitted">本方案已由系统根据申报信息自动安排回避，您的评分已退出有效评委数，无需继续操作。</template>
+        <template v-else>本方案已由系统根据申报信息自动安排回避，您无需评分；如已提交，该评分不计入有效评委数。</template>
+      </NAlert>
       <div class="criteria">
         <article v-for="item in store.criteria" :key="item.id"><div><b>{{ item.name }}</b><span>权重 {{ item.weight }}%</span><p>{{ item.description }}</p></div><NRate v-model:value="form.values[item.id]" :count="5" :disabled="disabled" /><small>{{ form.values[item.id] }} / {{ item.max }}</small></article>
       </div>
